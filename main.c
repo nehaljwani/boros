@@ -1,6 +1,7 @@
 #include "types.h"
 #include "mem.h"
 #include "print.h"
+#include "pci.h"
 
 void kmain(u64 free_page)
 {
@@ -8,6 +9,9 @@ void kmain(u64 free_page)
 
 	clear_screen(0);
 	printf("Hello from long mode\n");
+
+
+	pci_init();
 
 	while(1)
 		;
