@@ -217,7 +217,7 @@ void __attribute__((noreturn)) main(struct multiboot *mb)
 	kernel_size  = ((kernel_size+4095)/4096)*4096;
 	kernel_end   = kernel_start + kernel_size;
 
-	printf("Kernel: %lx-%lx\n", kernel_start, kernel_end);
+	printf("Kernel: %x-%x\n", kernel_start, kernel_end);
 
 	/* Map RAM below 4G for the kernel to start with */
 	init_mem(mb, kernel_end);

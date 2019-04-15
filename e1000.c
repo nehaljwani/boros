@@ -4,6 +4,7 @@
 #include "mem.h"
 #include "int.h"
 #include "cpu.h"
+#include "net.h"
 
 #define RX_NUM 16
 #define TX_NUM 16
@@ -29,11 +30,17 @@ struct tx_desc {
 
 static struct rx_desc *rx_desc;
 static struct tx_desc *tx_desc;
+static unsigned int rx_cur;
 
 enum REGISTER {
 	CTRL = 0,
 	STATUS = 8,
 	EERD = 0x14,
+
+	CMD_EOP = 1,
+	CMD_IFCS = 2,
+	CMD_IC = 4,
+	CMD_RS = 8,
 
 	ICR = 0xC0,
 	ICS = 0xC8,
@@ -42,6 +49,7 @@ enum REGISTER {
 
 	RX_CTRL = 0x100,
 	TX_CTRL = 0x400,
+	TIPG = 0x410,
 
 	RX_DESC      = 0x2800,
 	RX_DESC_LEN  = 0x2808,
@@ -92,8 +100,7 @@ static void print_buf(u8 *b, u32 len)
 
 static void e1000_recv(void)
 {
-	static unsigned int rx_cur;
-
+	printf("recv()\n");
 	while(rx_desc[rx_cur].status & 0x1)
 	{
 		u64 buf;
@@ -103,8 +110,9 @@ static void e1000_recv(void)
 		len = rx_desc[rx_cur].len;
 
 		printf("Packet recv: %lx (%d)\n", buf, len);
-		print_buf((void *)phys_to_virt(buf), len);
+		net_give_packet(phys_to_virt(buf), len);
 		write_reg32(RX_DESC_TAIL, rx_cur);
+		rx_desc[rx_cur].status = 0;
 		rx_cur++;
 		rx_cur = rx_cur % RX_NUM;
 	}
@@ -112,14 +120,31 @@ static void e1000_recv(void)
 
 static void __attribute__((interrupt)) e1000_interrupt(void *p)
 {
-
 	(void)p;
-	
+	printf("IRQ11\n");
 	if(read_reg32(ICR) & 0x80)
 		e1000_recv();
 
 	outb(0xA0, 0x20);
 	outb(0x20, 0x20);
+}
+
+void e1000_send(u32 len)
+{
+	int tx_cur;
+
+	tx_cur = read_reg32(TX_DESC_TAIL);
+	if(tx_desc[tx_cur].status == 0)
+		printf("tx_desc status == 0\n");
+	tx_desc[tx_cur].len = len;
+	tx_desc[tx_cur].cmd = CMD_EOP | CMD_RS | CMD_IFCS;
+
+	write_reg32(TX_DESC_TAIL, (tx_cur+1)%TX_NUM);
+}
+
+u64 e1000_get_buf(void)
+{
+	return tx_desc[read_reg32(TX_DESC_TAIL)].addr;
 }
 
 void e1000_init(u8 bus, u8 dev)
@@ -136,19 +161,19 @@ void e1000_init(u8 bus, u8 dev)
 	/* Read the MAC address from the EEPROM */
 	write_reg32(EERD, 1 | 0<<8);
 	while(((r = read_reg32(EERD)) & 0x10) == 0);
-	mac[5] = (r>>16)&0xFF;
-	mac[4] = (r>>24)&0xFF;
+	mac[0] = (r>>16)&0xFF;
+	mac[1] = (r>>24)&0xFF;
 	write_reg32(EERD, 1 | 1<<8);
 	while(((r = read_reg32(EERD)) & 0x10) == 0);
-	mac[3] = (r>>16)&0xFF;
-	mac[2] = (r>>24)&0xFF;
+	mac[2] = (r>>16)&0xFF;
+	mac[3] = (r>>24)&0xFF;
 	write_reg32(EERD, 1 | 2<<8);
 	while(((r = read_reg32(EERD)) & 0x10) == 0);
-	mac[1] = (r>>16)&0xFF;
-	mac[0] = (r>>24)&0xFF;
+	mac[4] = (r>>16)&0xFF;
+	mac[5] = (r>>24)&0xFF;
 
 	printf("[E1000] MAC: %02X%02X%02X%02X%02X%02X\n",
-		mac[5], mac[4], mac[3], mac[2], mac[1], mac[0]
+		mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]
 	);
 
 	/* Grab at 2MB page and divide it into two 1MB regions for RX and TX */
@@ -184,7 +209,9 @@ void e1000_init(u8 bus, u8 dev)
 	write_reg32(TX_DESC_LEN, sizeof (struct tx_desc[TX_NUM]));
 	write_reg32(TX_DESC_HEAD, 0);
 	write_reg32(TX_DESC_TAIL, 0);
-	write_reg32(TX_CTRL, 1<<1 | 1<<3 | 0xF<<4 | 0x40<<12);
+	write_reg32(TIPG, 0x60200A);
+//	write_reg32(TX_CTRL, 1<<1 | 1<<3 | 0xF<<4 | 0x40<<12);
+	write_reg32(TX_CTRL, 10); //0x3003f0fa);
 
 	/* Clear Multicast Table Array */
 	for(i = 0; i < 128; i++)
@@ -195,6 +222,8 @@ void e1000_init(u8 bus, u8 dev)
 	write_reg32(RAH, mac[5]<<8 | mac[4]);
 	write_reg32(IMC, ~0);
 	read_reg32(ICR);
+
+	net_set_mac(mac);
 
 	/* Register ourself for IRQ11 */
 	int_register(32+11, e1000_interrupt);

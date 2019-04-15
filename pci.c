@@ -53,7 +53,7 @@ static void pci_dump(u8 bus, u8 dev)
 	 * and match these tuples into the table and call
 	 * the registered callback instead.
 	 */
-	if(vendor_id == 0x8086 && device_id == 0x100E)
+	if(vendor_id == 0x8086 && (device_id == 0x100E || device_id == 0x100F))
 		e1000_init(bus, dev);
 }
 
